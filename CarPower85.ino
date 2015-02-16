@@ -31,7 +31,8 @@
 volatile boolean f_wdt = 1;
 volatile boolean f_alarm = 0;
 
-#define PIN_VOLTAGE 4
+#define PIN_VOLTAGE_PB 4
+#define PIN_VOLTAGE_ADC 2
 #define PIN_ALERT 2
 #define PIN_OUT1 0
 #define PIN_OUT2 1
@@ -43,15 +44,14 @@ volatile boolean f_alarm = 0;
 #define VOLT_THRESHOLD 13.0 // Voltage threshold value to detect engine start.
 #define DELAY_TURN_ON 10 // OUT1 and OUT2 turned on after 10 secs.
 #define DELAY_TURN_OFF_OUT1 10 // OUT1 turned off after 10 sec.
-#define DELAY_TURN_OFF_OUT2 20 // OUT2 turned off after 1 hour. 3400 ~ 3600/1.05. 1.05 is a measured time for one loop.
-//#define DELAY_TURN_OFF_OUT2 3400 // OUT2 turned off after 1 hour. 3400 ~ 3600/1.05. 1.05 is a measured time for one loop.
+#define DELAY_TURN_OFF_OUT2 3400 // OUT2 turned off after 1 hour. 3400 ~ 3600/1.05. 1.05 is a measured time for one loop.
 
 #define VOLTAGE_CALIBRATION 19.23 // Value calibrated to particular voltage divider. Adjust for your own divider.
 
 void setup()  
 {
   // Inputs
-  pinMode(PIN_VOLTAGE, INPUT); // PB4/A2
+  pinMode(PIN_VOLTAGE_PB, INPUT); // PB4/A2
   pinMode(PIN_ALERT, INPUT_PULLUP); // PB2
   
   // Outputs
@@ -82,7 +82,7 @@ void loop()
     int sum = 0;
     for (int i = 0; i < 10; i++)
     {
-      int adc = analogRead(2);
+      int adc = analogRead(PIN_VOLTAGE_ADC);
       sum += adc;
     }
 
@@ -99,7 +99,7 @@ void loop()
     if (f_alarm) {
       f_alarm = 0;
       if (!enabled) {
-        // Turn on OUT2 from alarm.
+        // Turn on OUT2 from Alarm.
         digitalWrite(PIN_OUT2, OUT_ON);
         counter = 0;
         counterDisabled = false;
