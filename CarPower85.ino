@@ -27,9 +27,8 @@
 #define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
 #endif
 
-// Variable for the Sleep/power down modes.
-volatile boolean f_wdt = 1;
-volatile boolean f_alarm = 0;
+volatile boolean f_wdt = 1; // Watchdog flag.
+volatile boolean f_alarm = 0; // Alarm interrupt flag.
 
 #define PIN_VOLTAGE_PB 4
 #define PIN_VOLTAGE_ADC 2
@@ -63,10 +62,10 @@ void setup()
   digitalWrite(PIN_OUT1, OUT_OFF);
   digitalWrite(PIN_OUT2, OUT_OFF);
   digitalWrite(PIN_OUT3, OUT_OFF);
-
+  
   setup_watchdog(6); // Approximately 1 second to sleep. Measured 1.05 sec for one loop.
   GIMSK = 0b00100000;    // turns on pin change interrupts
-  PCMSK = 0b00000100;    // turn on interrupts on pins PB0, PB1, &amp; PB4
+  PCMSK = 0b00000100;    // turn on interrupt on pin PB2
   sei();                 // enables interrupts
 }
 
@@ -85,19 +84,21 @@ void loop()
       int adc = analogRead(PIN_VOLTAGE_ADC);
       sum += adc;
     }
-
+    
+    // Calculate average from 10 measured samples.
     float f = sum / 10.0 / 1024.0 * VOLTAGE_CALIBRATION;
-
+    
     boolean newEnabled = f >= VOLT_THRESHOLD;
     if (newEnabled != enabled)
     {
+      // Begin cycle loops counter.
       enabled = newEnabled;
       counter = 0;
       counterDisabled = false;
     }
     
     if (f_alarm) {
-      f_alarm = 0;
+      f_alarm = 0; // Reset alarm flag.
       if (!enabled) {
         // Turn on OUT2 from Alarm.
         digitalWrite(PIN_OUT2, OUT_ON);
@@ -112,6 +113,7 @@ void loop()
 
       if (enabled && counter > DELAY_TURN_ON)
       {
+        // State: engine started, turn on OUT1 and OUT2. Keep OUT3 off.
         digitalWrite(PIN_OUT1, OUT_ON);
         digitalWrite(PIN_OUT2, OUT_ON);
         digitalWrite(PIN_OUT3, OUT_OFF);
@@ -119,26 +121,30 @@ void loop()
       }
       else if (!enabled)
       {
+        // State: engine stopped (1). Turn on OUT3. Will be kept ON until (4).
         digitalWrite(PIN_OUT3, OUT_ON);
         
         if (counter > (DELAY_TURN_OFF_OUT2 + 30))
         {
+          // State: engine stopped (4). Turn everything OFF.
           digitalWrite(PIN_OUT3, OUT_OFF);
           counterDisabled = true; // stop counter
         }
         else if (counter > DELAY_TURN_OFF_OUT2)
         {
+          // State: engine stopped (3). Turn OUT2 OFF.
           digitalWrite(PIN_OUT2, OUT_OFF);
         }
         else if (counter > DELAY_TURN_OFF_OUT1)
         {
+          // State: engine stopped (2). Turn OUT1 OFF.
           digitalWrite(PIN_OUT1, OUT_OFF);
         }
       }
     }
     
     // Go to sleep.
-    system_sleep();    
+    system_sleep();
   }
 }
 
@@ -173,9 +179,9 @@ void setup_watchdog(int ii) {
 
 // Watchdog Interrupt Service / is executed when watchdog timed out
 ISR(WDT_vect) {
-  f_wdt = 1;  // set global flag
+  f_wdt = 1;  // Set watchdog flag.
 }
 
 ISR(PCINT0_vect) {
-  f_alarm = 1;
+  f_alarm = 1; // Set alarm flag.
 }
