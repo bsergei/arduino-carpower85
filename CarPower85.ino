@@ -1,30 +1,23 @@
 /* 
- Simple accessories power controller for car. 
- Detects engine start (network voltage > 13.0V) and activate D0 and D1 after 3 secs.
- On engine stop deactivates D0 after 10 sec and D1 after 1 hour.
+ Accessories power controller for car.
  
  Attiny85 at 1Mhz with power saving.
  
  The connections to the ATTiny are as follows:
  ATTiny    Arduino    Info
- Pin  1  - 5          RESET / Rx (Not receiving any data)
- Pin  2  - 3          Tx for serial conenction (for debug)
- Pin  3  - 4          Voltage sensor
+ Pin  1  - 5          RESET
+ Pin  2  - 3          Out 3 (negative)
+ Pin  3  - 4          In (voltage sensor)
  Pin  4  -            GND
- Pin  5  - 0          Out 1
- Pin  6  - 1          Out 2
- Pin  7  - 2          NC
+ Pin  5  - 0          Out 1 (negative)
+ Pin  6  - 1          Out 2 (negative)
+ Pin  7  - 2          In (alert) (pull-up)
  Pin  8  -            +Vcc
-
- To debug via SoftwareSerial use 8 MHz frequency.
  
  */
 
 #include <avr/sleep.h>
 #include <avr/interrupt.h>
-
-// Uncomment to debug.
-//#include <SoftwareSerial.h>
 
 // Routines to set and clear bits (used in the sleep code)
 #ifndef cbi
@@ -34,45 +27,58 @@
 #define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
 #endif
 
-// Uncomment to debug.
-//#define rxPin 5    // Use a non-existant pin as we are not interested in receiving data
-//#define txPin 3
-//SoftwareSerial mySerial(rxPin, txPin); // RX, TX
-
 // Variable for the Sleep/power down modes.
 volatile boolean f_wdt = 1;
+volatile boolean f_alarm = 0;
+
+#define PIN_VOLTAGE 4
+#define PIN_ALERT 2
+#define PIN_OUT1 0
+#define PIN_OUT2 1
+#define PIN_OUT3 3
+
+#define OUT_ON LOW
+#define OUT_OFF HIGH
+
+#define VOLT_THRESHOLD 13.0 // Voltage threshold value to detect engine start.
+#define DELAY_TURN_ON 10 // OUT1 and OUT2 turned on after 10 secs.
+#define DELAY_TURN_OFF_OUT1 10 // OUT1 turned off after 10 sec.
+#define DELAY_TURN_OFF_OUT2 20 // OUT2 turned off after 1 hour. 3400 ~ 3600/1.05. 1.05 is a measured time for one loop.
+//#define DELAY_TURN_OFF_OUT2 3400 // OUT2 turned off after 1 hour. 3400 ~ 3600/1.05. 1.05 is a measured time for one loop.
+
+#define VOLTAGE_CALIBRATION 19.23 // Value calibrated to particular voltage divider. Adjust for your own divider.
 
 void setup()  
 {
-  // Uncomment to debug.
-  //mySerial.begin(4800);
+  // Inputs
+  pinMode(PIN_VOLTAGE, INPUT); // PB4/A2
+  pinMode(PIN_ALERT, INPUT_PULLUP); // PB2
+  
+  // Outputs
+  pinMode(PIN_OUT1, OUTPUT); // PB0
+  pinMode(PIN_OUT2, OUTPUT); // PB1
+  pinMode(PIN_OUT3, OUTPUT); // PB3
 
-  pinMode(4, INPUT); // PB4/A2
-  pinMode(0, OUTPUT); // PB0
-  pinMode(1, OUTPUT); // PB1
-
-  digitalWrite(0, LOW);
-  digitalWrite(1, LOW);
+  // Initial OUT state
+  digitalWrite(PIN_OUT1, OUT_OFF);
+  digitalWrite(PIN_OUT2, OUT_OFF);
+  digitalWrite(PIN_OUT3, OUT_OFF);
 
   setup_watchdog(6); // Approximately 1 second to sleep. Measured 1.05 sec for one loop.
+  GIMSK = 0b00100000;    // turns on pin change interrupts
+  PCMSK = 0b00000100;    // turn on interrupts on pins PB0, PB1, &amp; PB4
+  sei();                 // enables interrupts
 }
 
 boolean counterDisabled = true;
 boolean enabled = false;
-long counter = 0;
-
-#define VOLT_THRESHOLD 13.0 // Voltage threshold value to detect engine start.
-#define ENABLED_DELAY 3 // PB0 and PB1 to HIGH after 3 sec.
-#define DISABLED_DELAY_PIN0 10 // PB0 to LOW after 10 sec.
-#define DISABLED_DELAY_PIN1 3400 // PB1 to LOW after 1 hour. 3400 ~ 3600/1.05. 1.05 is a measured time for one loop.
-
-#define VOLTAGE_CALIBRATION 19.23 // Value calibrated to particular voltage divider. Adjust for your own divider.
+unsigned long counter = 0;
 
 void loop()
 {
-  if (f_wdt==1) {  // wait for timed out watchdog / flag is set when a watchdog timeout occurs
-    f_wdt=0;       // reset flag
-
+  if (f_wdt == 1) {  // wait for timed out watchdog / flag is set when a watchdog timeout occurs
+    f_wdt = 0;       // reset flag
+    
     int sum = 0;
     for (int i = 0; i < 10; i++)
     {
@@ -89,37 +95,50 @@ void loop()
       counter = 0;
       counterDisabled = false;
     }
+    
+    if (f_alarm) {
+      f_alarm = 0;
+      if (!enabled) {
+        // Turn on OUT2 from alarm.
+        digitalWrite(PIN_OUT2, OUT_ON);
+        counter = 0;
+        counterDisabled = false;
+      }
+    }
 
     if (!counterDisabled)
     {
       counter ++;
 
-      if (enabled && counter > ENABLED_DELAY)
+      if (enabled && counter > DELAY_TURN_ON)
       {
-        digitalWrite(0, HIGH);
-        digitalWrite(1, HIGH);
+        digitalWrite(PIN_OUT1, OUT_ON);
+        digitalWrite(PIN_OUT2, OUT_ON);
+        digitalWrite(PIN_OUT3, OUT_OFF);
         counterDisabled = true; // stop counter
       }
       else if (!enabled)
       {
-        if (counter > DISABLED_DELAY_PIN0)
+        digitalWrite(PIN_OUT3, OUT_ON);
+        
+        if (counter > (DELAY_TURN_OFF_OUT2 + 30))
         {
-          digitalWrite(0, LOW);
-          if (counter > DISABLED_DELAY_PIN1)
-          {
-            digitalWrite(1, LOW);
-            counterDisabled = true; // stop counter
-          }
+          digitalWrite(PIN_OUT3, OUT_OFF);
+          counterDisabled = true; // stop counter
+        }
+        else if (counter > DELAY_TURN_OFF_OUT2)
+        {
+          digitalWrite(PIN_OUT2, OUT_OFF);
+        }
+        else if (counter > DELAY_TURN_OFF_OUT1)
+        {
+          digitalWrite(PIN_OUT1, OUT_OFF);
         }
       }
     }
     
-    // Uncomment to debug.
-    //mySerial.println(f);
-    //mySerial.println(counter);
-
     // Go to sleep.
-    system_sleep();
+    system_sleep();    
   }
 }
 
@@ -142,7 +161,7 @@ void setup_watchdog(int ii) {
   if (ii > 9 ) ii=9;
   bb=ii & 7;
   if (ii > 7) bb|= (1<<5);
-  bb|= (1<<WDCE);
+  //bb|= (1<<WDCE); // Error here?
   ww=bb;
   MCUSR &= ~(1<<WDRF);
   // start timed sequence
@@ -154,5 +173,9 @@ void setup_watchdog(int ii) {
 
 // Watchdog Interrupt Service / is executed when watchdog timed out
 ISR(WDT_vect) {
-  f_wdt=1;  // set global flag
+  f_wdt = 1;  // set global flag
+}
+
+ISR(PCINT0_vect) {
+  f_alarm = 1;
 }
