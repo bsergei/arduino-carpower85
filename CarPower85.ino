@@ -41,11 +41,12 @@ volatile boolean f_alarm = 0; // Alarm interrupt flag.
 #define OUT_OFF HIGH
 
 #define VOLT_THRESHOLD 13.0 // Voltage threshold value to detect engine start.
-#define DELAY_TURN_ON 10 // OUT1 and OUT2 turned on after 10 secs.
-#define DELAY_TURN_OFF_OUT1 10 // OUT1 turned off after 10 sec.
-#define DELAY_TURN_OFF_OUT2 3400 // OUT2 turned off after 1 hour. 3400 ~ 3600/1.05. 1.05 is a measured time for one loop.
+#define DELAY_TURN_ON 5 // OUT1 and OUT2 turned on in 5 secs.
+#define DELAY_TURN_OFF_OUT1 10 // OUT1 turned off in 10 sec.
+#define DELAY_TURN_OFF_OUT2 3400 // OUT2 turned off in 1 hour. 3400 ~ 3600/1.05. 1.05 is a measured time for one loop.
+#define DELAY_TURN_OFF_OUT3 (DELAY_TURN_OFF_OUT2 + 60) // OUT3 turned off in 60 secs after OUT2 turned off. 
 
-#define VOLTAGE_CALIBRATION 19.23 // Value calibrated to particular voltage divider. Adjust for your own divider.
+#define VOLTAGE_CALIBRATION 20.18 // Value calibrated to particular voltage divider. Adjust for your own divider.
 
 void setup()  
 {
@@ -82,6 +83,7 @@ void loop()
     for (int i = 0; i < 10; i++)
     {
       int adc = analogRead(PIN_VOLTAGE_ADC);
+      delay(10);
       sum += adc;
     }
     
@@ -121,16 +123,18 @@ void loop()
       }
       else if (!enabled)
       {
+        boolean isAlarmLatched = digitalRead(PIN_ALERT) == LOW;
+        
         // State: engine stopped (1). Turn on OUT3. Will be kept ON until (4).
         digitalWrite(PIN_OUT3, OUT_ON);
         
-        if (counter > (DELAY_TURN_OFF_OUT2 + 30))
+        if (!isAlarmLatched && counter > DELAY_TURN_OFF_OUT3)
         {
           // State: engine stopped (4). Turn everything OFF.
           digitalWrite(PIN_OUT3, OUT_OFF);
           counterDisabled = true; // stop counter
         }
-        else if (counter > DELAY_TURN_OFF_OUT2)
+        else if (!isAlarmLatched && counter > DELAY_TURN_OFF_OUT2)
         {
           // State: engine stopped (3). Turn OUT2 OFF.
           digitalWrite(PIN_OUT2, OUT_OFF);
