@@ -41,13 +41,14 @@ volatile boolean f_alarm = 0; // Alarm interrupt flag.
 #define OUT_OFF HIGH
 
 #define VOLT_THRESHOLD 13.0 // Voltage threshold value to detect engine start.
-#define VOLT_CUTOFF 11.5 // Voltage threshold value cut off to turn everything off.
-#define DELAY_TURN_ON 5 // OUT1 and OUT2 turned on in 5 secs.
-#define DELAY_TURN_OFF_OUT1 10 // OUT1 turned off in 10 sec.
-#define DELAY_TURN_OFF_OUT2 10200 // OUT2 turned off in 3 hour. 3400 ~ 3600/1.05. 1.05 is a measured time for one loop.
+#define VOLT_CUTOFF 11.2 // Voltage threshold value cut off to turn everything off.
+#define DELAY_CUTOFF 15 // Ignore voltage drops to cut off for at least 15 secs.
+#define DELAY_TURN_ON 10 // OUT1 and OUT2 turned on in 10 secs.
+#define DELAY_TURN_OFF_OUT1 60 // OUT1 turned off in 60 sec.
+#define DELAY_TURN_OFF_OUT2 10800 // OUT2 turned off in 3 hour.
 #define DELAY_TURN_OFF_OUT3 (DELAY_TURN_OFF_OUT2 + 60) // OUT3 turned off in 60 secs after OUT2 turned off. 
 
-#define VOLTAGE_CALIBRATION 20.0 // Value calibrated to particular voltage divider. Adjust for your own divider.
+#define VOLTAGE_CALIBRATION 20.00 // Value calibrated to particular voltage divider. Adjust for your own divider.
 
 void setup()  
 {
@@ -65,7 +66,7 @@ void setup()
   digitalWrite(PIN_OUT2, OUT_OFF);
   digitalWrite(PIN_OUT3, OUT_OFF);
 
-  setup_watchdog(6); // Approximately 1 second to sleep. Measured 1.05 sec for one loop.
+  setup_watchdog(6); // Approximately 1 second to sleep.
   GIMSK = 0b00100000;    // turns on pin change interrupts
   PCMSK = 0b00000100;    // turn on interrupt on pin PB2
   sei();                 // enables interrupts
@@ -75,21 +76,18 @@ boolean counterDisabled = true;
 boolean enabled = false;
 unsigned long counter = 0;
 
+unsigned long counterVoltCutoff = 0;
+boolean counterVoltCutoffEnabled = false;
+boolean voltCutoffEnabled = false;
+
 void loop()
 {
   if (f_wdt == 1) {  // wait for timed out watchdog / flag is set when a watchdog timeout occurs
     f_wdt = 0;       // reset flag
 
-    int sum = 0;
-    for (int i = 0; i < 10; i++)
-    {
-      int adc = analogRead(PIN_VOLTAGE_ADC);
-      delay(10);
-      sum += adc;
-    }
+    int adc = analogRead(PIN_VOLTAGE_ADC);
 
-    // Calculate average from 10 measured samples.
-    float f = sum / 10.0 / 1024.0 * VOLTAGE_CALIBRATION;
+    float f = adc * VOLTAGE_CALIBRATION / 1024.0;
 
     boolean newEnabled = f >= VOLT_THRESHOLD;
     if (newEnabled != enabled)
@@ -100,12 +98,29 @@ void loop()
       counterDisabled = false;
     }
 
-    boolean shutdownAll = f <= VOLT_CUTOFF; 
-    if (shutdownAll && !counterDisabled && counter > 0 && counter < DELAY_TURN_OFF_OUT2)
-    {
+    boolean voltageDroppedToCutoff = f <= VOLT_CUTOFF; 
+    boolean newVoltCutoffEnabled = voltageDroppedToCutoff && !counterDisabled && counter > 0 && counter < DELAY_TURN_OFF_OUT2;
+    if (newVoltCutoffEnabled != voltCutoffEnabled) {
       // Voltage dropped to critical value. Shutdown everything immediately.
-      // Set elapsed channel2 counter to simulate soft shutdown (with channel3 activated).
-      counter = DELAY_TURN_OFF_OUT2;
+      voltCutoffEnabled = newVoltCutoffEnabled;
+      counterVoltCutoffEnabled = newVoltCutoffEnabled;
+      counterVoltCutoff = 0;
+    }
+
+    boolean shutdownAll = false;
+
+    if (counterVoltCutoffEnabled) {
+      if (counterVoltCutoff > DELAY_CUTOFF) {
+        if (!counterDisabled && counter > 0 && counter < DELAY_TURN_OFF_OUT2) {
+          // Set elapsed channel2 counter to simulate soft shutdown (with channel3 activated).      
+          counter = DELAY_TURN_OFF_OUT2;
+          shutdownAll = true;
+        }
+        counterVoltCutoffEnabled = false;
+        counterVoltCutoff = 0;
+      }    
+
+      counterVoltCutoff++;
     }
 
     if (f_alarm && !shutdownAll) {
@@ -133,7 +148,7 @@ void loop()
       else if (!enabled)
       {
         boolean isAlarmLatched = digitalRead(PIN_ALERT) == LOW;
-        
+
         // State: engine stopped (1). Turn on OUT3. Will be kept ON until (4).
         digitalWrite(PIN_OUT3, OUT_ON);
 
@@ -200,5 +215,10 @@ ISR(WDT_vect) {
 ISR(PCINT0_vect) {
   f_alarm = 1; // Set alarm flag.
 }
+
+
+
+
+
 
 
