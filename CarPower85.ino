@@ -41,19 +41,20 @@ volatile boolean f_alarm = 0; // Alarm interrupt flag.
 #define OUT_OFF HIGH
 
 #define VOLT_THRESHOLD 13.0 // Voltage threshold value to detect engine start.
+#define VOLT_CUTOFF 11.5 // Voltage threshold value cut off to turn everything off.
 #define DELAY_TURN_ON 5 // OUT1 and OUT2 turned on in 5 secs.
 #define DELAY_TURN_OFF_OUT1 10 // OUT1 turned off in 10 sec.
-#define DELAY_TURN_OFF_OUT2 3400 // OUT2 turned off in 1 hour. 3400 ~ 3600/1.05. 1.05 is a measured time for one loop.
+#define DELAY_TURN_OFF_OUT2 10200 // OUT2 turned off in 3 hour. 3400 ~ 3600/1.05. 1.05 is a measured time for one loop.
 #define DELAY_TURN_OFF_OUT3 (DELAY_TURN_OFF_OUT2 + 60) // OUT3 turned off in 60 secs after OUT2 turned off. 
 
-#define VOLTAGE_CALIBRATION 20.18 // Value calibrated to particular voltage divider. Adjust for your own divider.
+#define VOLTAGE_CALIBRATION 20.0 // Value calibrated to particular voltage divider. Adjust for your own divider.
 
 void setup()  
 {
   // Inputs
   pinMode(PIN_VOLTAGE_PB, INPUT); // PB4/A2
   pinMode(PIN_ALERT, INPUT_PULLUP); // PB2
-  
+
   // Outputs
   pinMode(PIN_OUT1, OUTPUT); // PB0
   pinMode(PIN_OUT2, OUTPUT); // PB1
@@ -63,7 +64,7 @@ void setup()
   digitalWrite(PIN_OUT1, OUT_OFF);
   digitalWrite(PIN_OUT2, OUT_OFF);
   digitalWrite(PIN_OUT3, OUT_OFF);
-  
+
   setup_watchdog(6); // Approximately 1 second to sleep. Measured 1.05 sec for one loop.
   GIMSK = 0b00100000;    // turns on pin change interrupts
   PCMSK = 0b00000100;    // turn on interrupt on pin PB2
@@ -78,7 +79,7 @@ void loop()
 {
   if (f_wdt == 1) {  // wait for timed out watchdog / flag is set when a watchdog timeout occurs
     f_wdt = 0;       // reset flag
-    
+
     int sum = 0;
     for (int i = 0; i < 10; i++)
     {
@@ -86,10 +87,10 @@ void loop()
       delay(10);
       sum += adc;
     }
-    
+
     // Calculate average from 10 measured samples.
     float f = sum / 10.0 / 1024.0 * VOLTAGE_CALIBRATION;
-    
+
     boolean newEnabled = f >= VOLT_THRESHOLD;
     if (newEnabled != enabled)
     {
@@ -98,8 +99,16 @@ void loop()
       counter = 0;
       counterDisabled = false;
     }
-    
-    if (f_alarm) {
+
+    boolean shutdownAll = f <= VOLT_CUTOFF; 
+    if (shutdownAll && !counterDisabled && counter > 0 && counter < DELAY_TURN_OFF_OUT2)
+    {
+      // Voltage dropped to critical value. Shutdown everything immediately.
+      // Set elapsed channel2 counter to simulate soft shutdown (with channel3 activated).
+      counter = DELAY_TURN_OFF_OUT2;
+    }
+
+    if (f_alarm && !shutdownAll) {
       f_alarm = 0; // Reset alarm flag.
       if (!enabled) {
         // Turn on OUT2 from Alarm.
@@ -127,26 +136,28 @@ void loop()
         
         // State: engine stopped (1). Turn on OUT3. Will be kept ON until (4).
         digitalWrite(PIN_OUT3, OUT_ON);
-        
-        if (!isAlarmLatched && counter > DELAY_TURN_OFF_OUT3)
+
+        if (counter > DELAY_TURN_OFF_OUT1)
+        {
+          // State: engine stopped (2). Turn OUT1 OFF.
+          digitalWrite(PIN_OUT1, OUT_OFF);
+        }
+
+        if ((!isAlarmLatched || shutdownAll) && counter > DELAY_TURN_OFF_OUT2)
+        {
+          // State: engine stopped (3). Turn OUT2 OFF.
+          digitalWrite(PIN_OUT2, OUT_OFF);
+        }
+
+        if ((!isAlarmLatched || shutdownAll) && counter > DELAY_TURN_OFF_OUT3)
         {
           // State: engine stopped (4). Turn everything OFF.
           digitalWrite(PIN_OUT3, OUT_OFF);
           counterDisabled = true; // stop counter
         }
-        else if (!isAlarmLatched && counter > DELAY_TURN_OFF_OUT2)
-        {
-          // State: engine stopped (3). Turn OUT2 OFF.
-          digitalWrite(PIN_OUT2, OUT_OFF);
-        }
-        else if (counter > DELAY_TURN_OFF_OUT1)
-        {
-          // State: engine stopped (2). Turn OUT1 OFF.
-          digitalWrite(PIN_OUT1, OUT_OFF);
-        }
       }
     }
-    
+
     // Go to sleep.
     system_sleep();
   }
@@ -189,3 +200,5 @@ ISR(WDT_vect) {
 ISR(PCINT0_vect) {
   f_alarm = 1; // Set alarm flag.
 }
+
+
